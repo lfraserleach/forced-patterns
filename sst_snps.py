@@ -7,6 +7,7 @@ import proplot as pplt
 import os
 import pickle
 import cartopy.crs as ccrs
+from snplib import load_2d_ts, flatten_ts
 
 # %%
 # USER INPUT
@@ -31,6 +32,19 @@ T = np.arange(2015,2050,1/12) # historical simulations start in 1920 for CESM, 1
 # %%
 # Preprocess SST data (or load from Pickle file)
 
+# def load_2d_ts(
+#         varnam, table, exp_p,
+#         exp_c='ssp370-ramip', memi=4, memf=10 model='NorESM2-LM',
+#         decades=[2015, 2020, 2030, 2040], datadir='/project/p/pjk/lfl/ramip',
+#         outputdir='/project/p/pjk/lfl/ramip/snp_data', reload_data=False
+#         ):
+memi = 4
+memf = 10
+table = 'Omon'
+varnam = 'tos'
+T=np.arange(2015,2050,1/12)
+name = f"{model}-{exp_p}-{exp_c}"
+
 try:
     if reload_data:
         raise Exception('reload_data is True, so model output will be '\
@@ -44,12 +58,10 @@ try:
         
 except:
     # preprocess SST data and save to Pickle
-
     # get data files
-    members = [f"r{i}i1p1f1" for i in range(4,11)]
+    members = [f"r{i}i1p1f1" for i in range(memi,memf+1)]
     n = len(members)
     ne = np.empty(n)
-
     # define axes
     ds0list = []
     for dec in decades:
@@ -60,8 +72,12 @@ except:
         ds0dec = xr.open_dataset(filename0)
         ds0list.append(ds0dec)
     ds0 = xr.concat(ds0list, dim="time")
-    lon = ds0.lon
-    lat = ds0.lat
+    if table in ['Omon', 'SImon']:
+        lat = ds0.latitude
+        lon = ds0.longitude
+    else:
+        lat = ts_all.lat
+        lon = ts_all.lon
     time = ds0.time
     nt = len(time)
     nt_cut = len(T)
@@ -70,11 +86,16 @@ except:
     ts_all = np.empty((n,nt_cut,len(lat),len(lon)))
     ts_clim_all = np.empty((n,12,len(lat),len(lon)))
     time = time[0:nt_cut]
-    ts_all = xr.DataArray(ts_all, coords=[ne, time, lat, lon], 
-        dims=["member", "time", "lat", "lon"])
-    ts_clim_all = xr.DataArray(ts_clim_all, coords=[ne, month, lat, lon], 
-        dims=["member", "month", "lat", "lon"])
-
+    if table in ['Omon', 'SImon']:
+        ts_all = xr.DataArray(ts_all, coords=[ne, time, lat, lon], 
+            dims=["member", "time", "latitude", "longitude"])
+        ts_clim_all = xr.DataArray(ts_clim_all, coords=[ne, month, lat, lon], 
+            dims=["member", "month", "latitude", "longitude"])
+    else:
+        ts_all = xr.DataArray(ts_all, coords=[ne, time, lat, lon], 
+            dims=["member", "time", "lat", "lon"])
+        ts_clim_all = xr.DataArray(ts_clim_all, coords=[ne, month, lat, lon], 
+            dims=["member", "month", "lat", "lon"])
     # concatenate all ensemble members into one dataset
     for ii, member in enumerate(members):
         print(ii)
@@ -102,7 +123,11 @@ except:
         
     pickle.dump(ts_all, open(f"{outputdir}/{name}_{varnam}_all.p", "wb" ),protocol=4)
     pickle.dump(ts_clim_all, open(f"{outputdir}/{name}_{varnam}_clim_all.p", "wb" ))
-    
+
+#     return ts_all, ts_clim_all, lat, lon, time
+
+# ts_all, ts_clim_all = load_2d_ts('tos', 'Omon', 'ssp370-126aer')
+
 ne = ts_all.member
 nt = len(ts_all.time)
 
@@ -118,24 +143,26 @@ plt.contourf(ts_all.lon.values,ts_all.lat.values,field_diff,np.arange(-3,3.1,0.1
 cbar = plt.colorbar()
 
 # %%
-# Preprocessing for Large Ensemble EOFs
+# # Preprocessing for Large Ensemble EOFs
 
-lon = ts_all.lon
-lat = ts_all.lat
-cosw = np.sqrt(np.cos(lat*np.pi/180))
-normvec  = cosw/np.sum(cosw);
-scale = np.sqrt(normvec);
+# lon = ts_all.lon
+# lat = ts_all.lat
+# cosw = np.sqrt(np.cos(lat*np.pi/180))
+# normvec  = cosw/np.sum(cosw);
+# scale = np.sqrt(normvec);
 
-X=ts_all*scale
+# X=ts_all*scale
 
-X_ensmean=X.mean('member')
-X_flat = X.stack(index=['time','member']).stack(shape=['lat','lon'])
-X_ensmean_flat = X_ensmean.stack(shape=['lat','lon'])
+# X_ensmean=X.mean('member')
+# X_flat = X.stack(index=['time','member']).stack(shape=['lat','lon'])
+# X_ensmean_flat = X_ensmean.stack(shape=['lat','lon'])
 
-# keep unscaled copies of these variables
-Xt_ensmean=ts_all.mean('member')
-Xt_flat = ts_all.stack(index=['time','member']).stack(shape=['lat','lon'])
-Xt_ensmean_flat = Xt_ensmean.stack(shape=['lat','lon'])
+# # keep unscaled copies of these variables
+# Xt_ensmean=ts_all.mean('member')
+# Xt_flat = ts_all.stack(index=['time','member']).stack(shape=['lat','lon'])
+# Xt_ensmean_flat = Xt_ensmean.stack(shape=['lat','lon'])
+
+X_flat, X_ensmean_flat, Xt_flat, Xt_ensmean_flat = flatten_ts(ts_all)
 
 index = X_flat.index
 n = len(index)

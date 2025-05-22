@@ -1,19 +1,22 @@
 # %%
+import os
+os.chdir('/home/p/pjk/lfl/ramip/forced-patterns')
 #load packages
 import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 import proplot as pplt
-import os
 import pickle
 import cartopy.crs as ccrs
+import importlib
+from snplib import load_2d_ts, flatten_scale_ts
 
 # %%
 # USER INPUT
 plt.style.use('prb')
 model = 'NorESM2-LM'
 exp_c = 'ssp370-ramip'
-exp_p = 'ssp370-126aer'
+exp_p = 'ssp370-eas126aer'
 reload_data = False
 recalculate_eofs = False
 datadir = '/project/p/pjk/lfl/ramip'
@@ -30,113 +33,32 @@ T = np.arange(2015,2050,1/12) # historical simulations start in 1920 for CESM, 1
 
 # %%
 # Preprocess SST data (or load from Pickle file)
-
-try:
-    if reload_data:
-        raise Exception('reload_data is True, so model output will be '\
-        + 're-loaded and pickled')
-    # load pre-processed SST data from Pickle
-    ts_all = pickle.load(open(f"{outputdir}/{name}_{varnam}_all.p", "rb" ))
-    ts_clim_all = pickle.load(open(f"{outputdir}/{name}_{varnam}_clim_all.p", "rb" ))
-    lat = ts_all.lat
-    lon = ts_all.lon
-    time = ts_all.time
-        
-except:
-    # preprocess SST data and save to Pickle
-
-    # get data files
-    members = [f"r{i}i1p1f1" for i in range(4,11)]
-    n = len(members)
-    ne = np.empty(n)
-
-    # define axes
-    ds0list = []
-    for dec in decades:
-        deci = dec
-        decf = dec + 9 - dec%10
-        filename0 = f"{ensdir_c}/{members[0]}/{table}/{varnam}/gn/v20230810/"\
-            + f"{varnam}_{table}_{model}_{exp_c}_{members[0]}_gn_{deci}01-{decf}12.nc"
-        ds0dec = xr.open_dataset(filename0)
-        ds0list.append(ds0dec)
-    ds0 = xr.concat(ds0list, dim="time")
-    lon = ds0.lon
-    lat = ds0.lat
-    time = ds0.time
-    nt = len(time)
-    nt_cut = len(T)
-    month = np.linspace(1, 12, 12)
-
-    ts_all = np.empty((n,nt_cut,len(lat),len(lon)))
-    ts_clim_all = np.empty((n,12,len(lat),len(lon)))
-    time = time[0:nt_cut]
-    ts_all = xr.DataArray(ts_all, coords=[ne, time, lat, lon], 
-        dims=["member", "time", "lat", "lon"])
-    ts_clim_all = xr.DataArray(ts_clim_all, coords=[ne, month, lat, lon], 
-        dims=["member", "month", "lat", "lon"])
-
-    # concatenate all ensemble members into one dataset
-    for ii, member in enumerate(members):
-        print(ii)
-        dslist_c = []
-        dslist_p = []
-        for dec in decades:
-            deci = dec
-            decf = dec + 9 - dec%10
-            filename_c = f"{ensdir_c}/{member}/{table}/{varnam}/gn/v20230810/"\
-                + f"{varnam}_{table}_{model}_{exp_c}_{member}_gn_{deci}01-{decf}12.nc"
-            filename_p = f"{ensdir_p}/{member}/{table}/{varnam}/gn/v20230810/"\
-                + f"{varnam}_{table}_{model}_{exp_p}_{member}_gn_{deci}01-{decf}12.nc"
-            dsdec_c = xr.open_dataset(filename_c)
-            dsdec_p = xr.open_dataset(filename_p)
-            dslist_c.append(dsdec_c)
-            dslist_p.append(dsdec_p)
-        ds_member_c = xr.concat(dslist_c, dim="time")
-        ds_member_p = xr.concat(dslist_p, dim="time")
-
-        ts = ds_member_p[varnam][-nt:,:,:] - ds_member_c[varnam][-nt:,:,:]
-        ts_clim = ts.groupby('time.month').mean('time')
-        ts_anom = ts.groupby('time.month')-ts_clim
-        ts_all[ii,:,:,:] = ts_anom
-        ts_clim_all[ii,:,:,:] = ts_clim
-        
-    pickle.dump(ts_all, open(f"{outputdir}/{name}_{varnam}_all.p", "wb" ),protocol=4)
-    pickle.dump(ts_clim_all, open(f"{outputdir}/{name}_{varnam}_clim_all.p", "wb" ))
-    
+ts_all, ts_clim_all = load_2d_ts(varnam, table, exp_p)
 ne = ts_all.member
 nt = len(ts_all.time)
-
-# %%
-# sanity check plot, just shows changes in temperature over the simulation
-
-field = ts_all.values
-field = np.mean(field,axis=0)
-field_diff = np.mean(field[912:1031,:,:],axis=0)-np.mean(field[0:119,:,:],axis=0)
-field_diff = (ts_all.sel(time=slice('2040-01-01','2049-01-01')).mean(dim='time')-ts_all.sel(time=slice('2015-01-01','2020-01-01')).mean(dim='time')).mean(dim='member')
-f=plt.figure()
-plt.contourf(ts_all.lon.values,ts_all.lat.values,field_diff,np.arange(-3,3.1,0.1),cmap=plt.cm.RdBu_r)
-cbar = plt.colorbar()
-
-# %%
-# Preprocessing for Large Ensemble EOFs
-
-lon = ts_all.lon
 lat = ts_all.lat
+lon = ts_all.lon
+
+# # %%
+# # sanity check plot, just shows changes in temperature over the simulation
+# field = ts_all.values
+# field = np.mean(field,axis=0)
+# field_diff = np.mean(field[912:1031,:,:],axis=0)-np.mean(field[0:119,:,:],axis=0)
+# field_diff = (ts_all.sel(time=slice('2040-01-01','2049-01-01')).mean(dim='time')-ts_all.sel(time=slice('2015-01-01','2020-01-01')).mean(dim='time')).mean(dim='member')
+# f=plt.figure()
+# plt.contourf(ts_all.lon.values,ts_all.lat.values,field_diff,np.arange(-3,3.1,0.1),cmap=plt.cm.RdBu_r)
+# cbar = plt.colorbar()
+
+# %%
+# flatten data arrays for EOF analysis
+import sys
+importlib.reload(sys.modules['snplib'])
+from snplib import flatten_scale_ts
+X_flat, X_ensmean_flat, Xt_ensmean, Xt_flat, Xt_ensmean_flat, scale = (
+    flatten_scale_ts(ts_all)
+    )
 cosw = np.sqrt(np.cos(lat*np.pi/180))
 normvec  = cosw/np.sum(cosw);
-scale = np.sqrt(normvec);
-
-X=ts_all*scale
-
-X_ensmean=X.mean('member')
-X_flat = X.stack(index=['time','member']).stack(shape=['lat','lon'])
-X_ensmean_flat = X_ensmean.stack(shape=['lat','lon'])
-
-# keep unscaled copies of these variables
-Xt_ensmean=ts_all.mean('member')
-Xt_flat = ts_all.stack(index=['time','member']).stack(shape=['lat','lon'])
-Xt_ensmean_flat = Xt_ensmean.stack(shape=['lat','lon'])
-
 index = X_flat.index
 n = len(index)
 
@@ -204,7 +126,7 @@ print(signal_frac[0:30])
 plt.plot(signal_frac,marker='o')
 plt.xlim(0,30)
 plt.title('Signal Fraction')
-plt.savefig(f'{plots_dir}/signal_fraction.pdf')
+# plt.savefig(f'{plots_dir}/signal_fraction.pdf')
 
 #signal_frac_check = np.zeros(31)
 #for ii in range(31): 
@@ -218,6 +140,8 @@ plt.savefig(f'{plots_dir}/signal_fraction.pdf')
 
 # %%
 # Plot S/N maximizing patterns (SNPs)
+tk_reshape=tk.reshape(nt,len(ne),neof)
+
 Ne = 3
 nrows = 1
 ncols = Ne
@@ -240,18 +164,17 @@ for neof_plot in range(Ne):
     # cbar = ax.colorbar()
     ax[neof_plot].coastlines()
 f.colorbar(ctr, label='$\delta{T} [K]$')
-f.savefig(f'{plots_dir}/snp_maps.pdf')
+# f.savefig(f'{plots_dir}/eas_tas_snp_maps.pdf')
 
 # %%
 # Plot forced pattern timeseries
-tk_reshape=tk.reshape(nt,len(ne),neof)
-f, ax = plt.subplots(nrows,ncols,figsize=(3.5*ncols,1*nrows),sharey=True,
+f, ax = plt.subplots(nrows,ncols,figsize=(3.5*ncols,2*nrows),sharey=True,
     constrained_layout=True)
 for neof_plot in range(Ne): 
     [ax[neof_plot].plot(T,tk_reshape[:,mm,neof_plot],color='crimson') for mm in range(7)];
     ax[neof_plot].plot(T,tk_emean[:,neof_plot])
     # ax[neof_plot].title('SNP'+str(neof_plot+1))
-f.savefig(f'{plots_dir}/snp_timeseries.pdf')
+# f.savefig(f'{plots_dir}/eas_tas_snp_timeseries.pdf')
 
 # %%
 # Forced component from leading forced patterns
@@ -277,14 +200,14 @@ GMST_ensmean = Xt_ensmean.mean('lon').mean('lat')
 # US_land_forced = X_forced_land.sel(lon=slice(235,295),lat=slice(45,30)).mean('lon').mean('lat')
 # US_land_ensmean = Xt_ensmean_land.sel(lon=slice(235,295),lat=slice(45,30)).mean('lon').mean('lat')
 
-Nino34_forced = X_forced.sel(lon=slice(190,240),lat=slice(5,-5)).mean('lon').mean('lat')
-Nino34_ensmean = Xt_ensmean.sel(lon=slice(190,240),lat=slice(5,-5)).mean('lon').mean('lat')
+Nino34_forced = X_forced.sel(lon=slice(190,240),lat=slice(-5,5)).mean('lon').mean('lat')
+Nino34_ensmean = Xt_ensmean.sel(lon=slice(190,240),lat=slice(-5,5)).mean('lon').mean('lat')
 
-EEP_forced = X_forced.sel(lon=slice(210,270),lat=slice(6,-6)).mean('lon').mean('lat')
-EEP_ensmean = Xt_ensmean.sel(lon=slice(210,270),lat=slice(6,-6)).mean('lon').mean('lat')
+EEP_forced = X_forced.sel(lon=slice(210,270),lat=slice(-6,6)).mean('lon').mean('lat')
+EEP_ensmean = Xt_ensmean.sel(lon=slice(210,270),lat=slice(-6,6)).mean('lon').mean('lat')
 
-WEP_forced = X_forced.sel(lon=slice(120,180),lat=slice(6,-6)).mean('lon').mean('lat')
-WEP_ensmean = Xt_ensmean.sel(lon=slice(120,180),lat=slice(6,-6)).mean('lon').mean('lat')
+WEP_forced = X_forced.sel(lon=slice(120,180),lat=slice(-6,6)).mean('lon').mean('lat')
+WEP_ensmean = Xt_ensmean.sel(lon=slice(120,180),lat=slice(-6,6)).mean('lon').mean('lat')
 
 # %%
 f=plt.figure(figsize=(3,3),constrained_layout=True)
@@ -292,7 +215,7 @@ plt.plot(T,GMST_ensmean+ts_clim_all.mean())
 plt.plot(T,GMST_forced+ts_clim_all.mean())
 plt.title('GMST')
 plt.legend(('Ens. Mean','SNP Filtered'),loc='lower right')
-plt.savefig(f'{plots_dir}/gmst_timeseries.pdf')
+# plt.savefig(f'{plots_dir}/eas_gmst_timeseries.pdf')
 
 #%%
 # # global mean temperature response vs time
@@ -315,21 +238,21 @@ plt.savefig(f'{plots_dir}/gmst_timeseries.pdf')
 # plot of forced pattern vs ensemble mean
 yri = 2040
 yrf = 2049
-min_tas = -2
-max_tas = 2
-step_tas = 0.2
+min_tas = -1
+max_tas = 1
+step_tas = 0.1
 levels_tas = np.arange(min_tas,max_tas+step_tas,step_tas)
 cmap_tas = plt.cm.RdBu_r
 array = [
     [1],
     [2],
 ]
-f = pplt.figure(refwidth=4)
-axs = f.subplots(array,proj='cyl')
+f = pplt.figure(refwidth=3)
+axs = f.subplots(array,proj='npstere')
 axs.format(
     abc=False, abcloc='ul',
     xlabel='xlabel', ylabel='ylabel',
-    coast=True
+    coast=True, boundinglat=45
 )
 ctr0 = axs[0].contourf(lon,lat,
     X_forced.sel(time=slice(f'{yri}-01-01',f'{yrf}-12-31')).mean('time')
@@ -344,7 +267,7 @@ ctr1 = axs[1].contourf(lon,lat,
     transform=ccrs.PlateCarree())
 axs[1].set_title(r'$\langle{X}\rangle$, mean over 2040-2049')
 f.colorbar(ctr0, loc='r', label='$\delta{T} [K]$')
-f.savefig(f'{plots_dir}/ensmean_vs_snp.pdf')
+# f.savefig(f'{plots_dir}/eas_tas_ensmean_vs_snp.pdf')
 
 # %%
 f=plt.figure()
