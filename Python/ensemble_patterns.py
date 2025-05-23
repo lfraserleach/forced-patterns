@@ -1,117 +1,69 @@
 # %%
-#load packages
-import xarray as xr
-import numpy as np
-import matplotlib.pyplot as plt
+# load builtin packages
 import os
 import pickle
+#load packages
+import matplotlib.pyplot as plt
+import numpy as np
+import xarray as xr
+# load user-defined packages
+import snplib as snp
+
+#%%
+# Set plot format
+plt.style.use('prb')
 
 # %%
 # USER INPUT
-
-lensdir='/glade/collections/cdg/data/CLIVAR_LE/cesm_lens/Amon/ts/' # directory where surface temperature data are located
-outputdir = '/glade/work/rwills/python_output/forced_component/' # directory for saving Pickle files (copy files and change to a directory you have write access)
-name = "cesm_lens" # name used in Pickle files
-varnam = 'ts' # set to ts for full ts field, ts50 for 50°S to 50°N 
-T = np.arange(1920,2006,1/12) # historical simulations start in 1920 for CESM, 1850 for MPI (first input to arrange must match)
+COMPUTE_EOFS = True
+DATA_DIR = 'scratch'
+EOF_DIR = '/scratch/p/pjk/lfl/snp_eofs/synthetic-data-rwills/'
+EXP_C = 'ssp370'
+EXP_P = 'ssp370-126aer'
+MODEL = 'synthetic-data'
+PICKLE_DIR_TS = '/scratch/p/pjk/lfl/snp_data_matrices/'
+PRECISE_FNAMES = False
+REALIZATIONS = np.arange(1, 11)
+VAR_NAME = 'tas'
+VAR_TABLE = 'Amon'
+YRI_AVG = 2040
+YRF_AVG = 2049
+T = np.arange(2015,2051,1/12) # historical simulations start in 1920 for CESM, 1850 for MPI (first input to arrange must match)
 # Second input to arrange can be chosen to select period of interest, but change name used in pickle files for end-dates other than 2006
 
-# %%
-# Preprocess SST data (or load from Pickle file)
-
-# MPI-LENS fx file for common analsis grid and land mask
-ds_fx = xr.open_dataset(outputdir+'T63GR15_jan_surf.nc')
-ds_fx = ds_fx.coarsen(lon=2, lat = 2, boundary='trim').mean()
-loni = ds_fx.lon
-lati = ds_fx.lat
-SLF = ds_fx.SLF
-mask = SLF.where(SLF<0.5)+1
-mask = np.floor(mask.values)
-landmask = SLF.where(SLF>0.5)
-landmask = np.ceil(landmask.values)
-if varnam == 'ts50':
-    mask = mask[8:40,:]
-    landmask = landmask[8:40,:]
-
-try:
-    # load pre-processed SST data from Pickle
-    ts_all = pickle.load( open(outputdir+name+"_"+varnam+"_all.p", "rb" ))
-    ts_clim_all = pickle.load( open(outputdir+name+"_"+varnam+"_clim_all.p", "rb" ))
-    lat = ts_all.lat
-    lon = ts_all.lon
-    time = ts_all.time
-        
-except:
-    # preprocess SST data and save to Pickle
-    
-    # get data files
-    files = sorted(os.listdir(lensdir))
-    files = [s for s in files if "rcp85" in s]
-    n = len(files)
-    ne = np.empty(n)
-
-    # define axes
-    filename0 = lensdir+files[0]
-    ds0 = xr.open_dataset(filename0)
-    lon = ds0.lon
-    lat = ds0.lat
-    time = ds0.time
-    nt = len(time) 
-    nt_cut = len(T)
-    month = np.linspace(1, 12, 12)
-    
-    for ii in range(n):
-        # find ensemble member number
-        i1 = files[ii].find('85_r')+4
-        i2 = files[ii].find('i1')
-        ne[ii] = int(files[ii][i1:i2])
-    
-    ts_all = np.empty((n,nt_cut,len(lat),len(lon)))
-    ts_clim_all = np.empty((n,12,len(lat),len(lon)))
-    time = time[0:nt_cut]
-    ts_all = xr.DataArray(ts_all, coords=[ne, time, lat, lon], dims=["member", "time", "lat", "lon"])
-    ts_clim_all = xr.DataArray(ts_clim_all, coords=[ne, month, lat, lon], dims=["member", "month", "lat", "lon"])
-
-    # concatenate all ensemble members into one dataset
-    for ii in range(n):
-        print(ii)
-        filename = lensdir+files[ii]
-        ds_member = xr.open_dataset(filename)
-        ts = ds_member.ts[-nt:,:,:]
-        ts = ts[0:nt_cut,:,:]
-        ts_clim = ts.groupby('time.month').mean('time')
-        ts_anom = ts.groupby('time.month')-ts_clim
-        if ne[ii] >= 35: # workaround because latitude in the CESM runs on a different computer have machine perturbation lat differences
-            ts_all[ii,:,:,:] = ts_anom.values
-            ts_clim_all[ii,:,:,:] = ts_clim.values
-        else:
-            ts_all[ii,:,:,:] = ts_anom
-            ts_clim_all[ii,:,:,:] = ts_clim
-        
-    # coarsen resolution by a factor of 2
-    ts_all = ts_all.coarsen(lon=2, lat = 2, boundary='trim').mean()
-    ts_clim_all = ts_clim_all.coarsen(lon=2, lat = 2, boundary='trim').mean()
-    
-    # interpolate to common analysis grid (land mask not yet applied)
-    if varnam == 'ts50':
-        lati = lati[8:40] # to exclude latitudes greater than 50 degrees
-    ts_all = ts_all.interp(lon = loni, lat = lati)
-    ts_clim_all = ts_clim_all.interp(lon = loni, lat = lati)
-    
-    pickle.dump(ts_all, open(outputdir+name+"_"+varnam+"_all.p", "wb" ),protocol=4)
-    pickle.dump(ts_clim_all, open(outputdir+name+"_"+varnam+"_clim_all.p", "wb" ))
-    
-ne = ts_all.member
+#%%
+ts_pickle_name = f"{MODEL}-{EXP_P}-{EXP_C}_{VAR_NAME}.p"
+ts_pickle_path = f"{PICKLE_DIR_TS}/{MODEL}/{EXP_P}/{ts_pickle_name}"
+ts_anom_coarse, ts_clim_coarse = snp.compute_coarsen_pickle_ts(
+    exp_c=EXP_C, exp_p=EXP_P, model=MODEL, table=VAR_TABLE, var_name=VAR_NAME,
+    pickle_path=ts_pickle_path, precise_fnames=PRECISE_FNAMES,
+    realizations=REALIZATIONS, coarsen_factor=2, derived=False,
+    directory=DATA_DIR)
+ts_all = ts_anom_coarse
+ts_clim = ts_clim_coarse
+ne = ts_all.realization
 nt = len(ts_all.time)
+n_lat = len(ts_all.lat)
+n_lon = len(ts_all.lon)
 
 # %%
 # sanity check plot, just shows changes in temperature over the simulation
 
-field = ts_all.values
-field = np.mean(field,axis=0)
-field_diff = np.mean(field[912:1031,:,:],axis=0)-np.mean(field[0:119,:,:],axis=0)
+# field = ts_all.values
+field = ts_all
+field = ts_all.mean(dim='realization')
+# field = np.mean(field,axis=0)
+field_diff = (
+    ts_all.sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+    .mean(dim=['time', 'realization'])
+    - ts_all.sel(time=slice(f'2015-01-01', f'2024-12-31'))
+    .mean(dim=['time', 'realization'])
+)
+# field_diff = np.mean(field[912:1031,:,:],axis=0)-np.mean(field[0:119,:,:],axis=0)
 f=plt.figure()
-plt.contourf(ts_all.lon.values,ts_all.lat.values,field_diff,np.arange(-1,1.1,0.1),cmap=plt.cm.RdBu_r)
+plt.contourf(
+    ts_all.lon.values, ts_all.lat.values, field_diff, np.arange(-1,1.1,0.1),
+    cmap=plt.cm.RdBu_r)
 cbar = plt.colorbar()
 
 # %%
@@ -125,13 +77,13 @@ scale = np.sqrt(normvec);
 
 X=ts_all*scale
 
-X_ensmean=X.mean('member')
-X_flat = X.stack(index=['time','member']).stack(shape=['lat','lon'])
+X_ensmean=X.mean('realization')
+X_flat = X.stack(index=['time','realization']).stack(shape=['lat','lon'])
 X_ensmean_flat = X_ensmean.stack(shape=['lat','lon'])
 
 # keep unscaled copies of these variables
-Xt_ensmean=ts_all.mean('member')
-Xt_flat = ts_all.stack(index=['time','member']).stack(shape=['lat','lon'])
+Xt_ensmean=ts_all.mean('realization')
+Xt_flat = ts_all.stack(index=['time','realization']).stack(shape=['lat','lon'])
 Xt_ensmean_flat = Xt_ensmean.stack(shape=['lat','lon'])
 
 index = X_flat.index
@@ -141,16 +93,15 @@ n = len(index)
 %%time
 # Perform ensemble EOF analysis (takes a few minutes), or load from Pickle if it has already been done
 
-try:
+if not COMPUTE_EOFS:
     # load PCA output from Pickle
-    pcvec,evl = pickle.load( open(outputdir+name+"_"+varnam+"_EIG.p", "rb" ))
-
-except:
+    pcvec,evl = pickle.load( open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EIG.p", "rb" ))
+else: 
     # Large Ensemble EOFs
     Cov = np.matmul(X_flat.values.T,X_flat.values)/(n-1)
     evl,pcvec = np.linalg.eig(Cov)
-    pickle.dump([pcvec,evl], open(outputdir+name+"_"+varnam+"_EIG.p", "wb" ),protocol=4)
-    
+    pickle.dump([pcvec,evl], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EIG.p", "wb" ),protocol=4)
+
 s=np.sqrt(evl)
 
 ## keeping the below as a reminder that SVD is much slower than eigenvalue analysis for datasets with long time dimension
@@ -160,14 +111,14 @@ s=np.sqrt(evl)
 
 #try:
 #    # load SVD output from Pickle
-#    u,s = pickle.load( open(outputdir+name+"_"+varnam+"_SVD.p", "rb" ))
+#    u,s = pickle.load( open(EOF_DIR+MODEL+"_"+VAR_NAME+"_SVD.p", "rb" ))
 
 #except:
     # Large Ensemble EOFs
     
 #    #u,s = np.linalg.svd(np.transpose(X_flat.values)/np.sqrt(n-1))
 #    u,s = np.linalg.svd(np.transpose(X_flat[0:int(n/10),:].values)/np.sqrt(n/10-1))
-#    pickle.dump([u,s], open(outputdir+name+"_"+varnam+"_SVD.p", "wb" ),protocol=4)
+#    pickle.dump([u,s], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_SVD.p", "wb" ),protocol=4)
     
 #eigvals=np.diag(s*s)
 
@@ -208,7 +159,7 @@ for ii in range(neof):
         tk_emean[:,ii] = -tk_emean[:,ii]
         sign_eof[ii] = -1
         
-pickle.dump([tk,tk_emean,SNPs_reshaped,weights,signal_frac], open(outputdir+name+"_"+varnam+"_SNP"+str(neof)+".p", "wb" ),protocol=4)
+pickle.dump([tk,tk_emean,SNPs_reshaped,weights,signal_frac], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_SNP"+str(neof)+".p", "wb" ),protocol=4)
 
 # %%
 print(signal_frac[0:30])
@@ -228,7 +179,7 @@ plt.title('Signal Fraction')
 
 # %%
 # Plot S/N maximizing patterns (SNPs)
-for neof_plot in range(5): 
+for neof_plot in range(2): 
     f=plt.figure()
     plt.contourf(lon.values,lat.values,np.squeeze(SNPs_reshaped[neof_plot,:,:]),np.arange(-0.6,0.65,0.05),cmap=plt.cm.RdBu_r)
     cbar = plt.colorbar()
@@ -237,23 +188,23 @@ for neof_plot in range(5):
 # Plot forced pattern timeseries
 tk_reshape=tk.reshape(nt,len(ne),neof)
 
-for neof_plot in range(5): 
+for neof_plot in range(2): 
     f=plt.figure()
-    [plt.plot(T,tk_reshape[:,mm,neof_plot],color='crimson') for mm in range(40)];
-    plt.plot(T,tk_emean[:,neof_plot])
+    [plt.plot(T,tk_reshape[:,mm,neof_plot],color='crimson') for mm in range(10)];
+    plt.plot(T,tk_emean[:,neof_plot], color='k')
     plt.title('SNP'+str(neof_plot+1))
 
 # %%
 # Forced component from leading forced patterns
 
-M = 13  # number of forced patterns to retain, choose cutoff based on eigenvalue spectrum, or check significant patterns with bootstrapping
+M = 2  # number of forced patterns to retain, choose cutoff based on eigenvalue spectrum, or check significant patterns with bootstrapping
 
 X_forced = np.matmul(tk_emean[:,0:M],SNPs_reshaped[0:M,:,:].reshape(M,len(lat)*len(lon)))
 X_forced = X_forced.reshape(len(T),len(lat),len(lon))
-X_forced_land = X_forced*landmask[None,:,:]
+# X_forced_land = X_forced*landmask[None,:,:]
 X_forced = xr.DataArray(X_forced, coords=[T,lat,lon], dims=["time","lat","lon"])
-X_forced_land = xr.DataArray(X_forced_land, coords=[T,lat,lon], dims=["time","lat","lon"])
-Xt_ensmean_land = Xt_ensmean*landmask
+# X_forced_land = xr.DataArray(X_forced_land, coords=[T,lat,lon], dims=["time","lat","lon"])
+# Xt_ensmean_land = Xt_ensmean*landmask
 
 GMST_forced = X_forced.mean('lon').mean('lat')
 GMST_ensmean = Xt_ensmean.mean('lon').mean('lat')
@@ -261,20 +212,46 @@ GMST_ensmean = Xt_ensmean.mean('lon').mean('lat')
 #Arctic_forced = X_forced.sel(lat=slice(90,65)).mean('lon').mean('lat')
 #Arctic_ensmean = Xt_ensmean.sel(lat=slice(90,65)).mean('lon').mean('lat')
 
-tropical_land_forced = X_forced_land.sel(lat=slice(10,-10)).mean('lon').mean('lat')
-tropical_land_ensmean = Xt_ensmean_land.sel(lat=slice(10,-10)).mean('lon').mean('lat')
+# tropical_land_forced = X_forced_land.sel(lat=slice(10,-10)).mean('lon').mean('lat')
+# tropical_land_ensmean = Xt_ensmean_land.sel(lat=slice(10,-10)).mean('lon').mean('lat')
 
-US_land_forced = X_forced_land.sel(lon=slice(235,295),lat=slice(45,30)).mean('lon').mean('lat')
-US_land_ensmean = Xt_ensmean_land.sel(lon=slice(235,295),lat=slice(45,30)).mean('lon').mean('lat')
+# US_land_forced = X_forced_land.sel(lon=slice(235,295),lat=slice(45,30)).mean('lon').mean('lat')
+# US_land_ensmean = Xt_ensmean_land.sel(lon=slice(235,295),lat=slice(45,30)).mean('lon').mean('lat')
 
-Nino34_forced = X_forced.sel(lon=slice(190,240),lat=slice(5,-5)).mean('lon').mean('lat')
-Nino34_ensmean = Xt_ensmean.sel(lon=slice(190,240),lat=slice(5,-5)).mean('lon').mean('lat')
+Nino34_forced = X_forced.sel(lon=slice(190,240),lat=slice(-5,5)).mean('lon').mean('lat')
+Nino34_ensmean = Xt_ensmean.sel(lon=slice(190,240),lat=slice(-5,5)).mean('lon').mean('lat')
 
-EEP_forced = X_forced.sel(lon=slice(210,270),lat=slice(6,-6)).mean('lon').mean('lat')
-EEP_ensmean = Xt_ensmean.sel(lon=slice(210,270),lat=slice(6,-6)).mean('lon').mean('lat')
+EEP_forced = X_forced.sel(lon=slice(210,270),lat=slice(-6,6)).mean('lon').mean('lat')
+EEP_ensmean = Xt_ensmean.sel(lon=slice(210,270),lat=slice(-6,6)).mean('lon').mean('lat')
 
-WEP_forced = X_forced.sel(lon=slice(120,180),lat=slice(6,-6)).mean('lon').mean('lat')
-WEP_ensmean = Xt_ensmean.sel(lon=slice(120,180),lat=slice(6,-6)).mean('lon').mean('lat')
+WEP_forced = X_forced.sel(lon=slice(120,180),lat=slice(-6,6)).mean('lon').mean('lat')
+WEP_ensmean = Xt_ensmean.sel(lon=slice(120,180),lat=slice(-6,6)).mean('lon').mean('lat')
+
+#%%
+# Plot surface temperature response.
+X_forced_plot = (
+    X_forced.sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+    .mean(dim='time')
+)
+X_ensmean_plot = (
+    ts_all.sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+    .mean(dim=['time', 'realization'])
+)
+f=plt.figure()
+plt.contourf(
+    lon.values, lat.values, X_forced_plot, np.arange(-0.6,0.65,0.1),
+    cmap=plt.cm.RdBu_r)
+cbar = plt.colorbar()
+f=plt.figure()
+plt.contourf(
+    lon.values, lat.values, X_ensmean_plot, np.arange(-0.6,0.65,0.1),
+    cmap=plt.cm.RdBu_r)
+cbar = plt.colorbar()
+f=plt.figure()
+plt.contourf(
+    lon.values, lat.values, X_forced_plot - X_ensmean_plot,
+    cmap=plt.cm.RdBu_r)
+cbar = plt.colorbar()
 
 # %%
 f=plt.figure()
@@ -305,20 +282,3 @@ plt.title('Pacific SST Gradient')
 plt.legend(('Ens. Mean','SNP Filtered'))
 
 # %%
-f=plt.figure()
-plt.plot(T,US_land_ensmean)
-plt.plot(T,US_land_forced)
-plt.title('U.S. Land Surface Temperature')
-plt.legend(('Ens. Mean','SNP Filtered'))
-
-# %%
-f=plt.figure()
-plt.plot(T,tropical_land_ensmean)
-plt.plot(T,tropical_land_forced)
-plt.title('Tropical Land Surface Temperature')
-plt.legend(('Ens. Mean','SNP Filtered'))
-
-# %%
-
-
-
