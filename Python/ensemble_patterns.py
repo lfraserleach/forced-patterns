@@ -89,22 +89,46 @@ Xt_ensmean_flat = Xt_ensmean.stack(shape=['lat','lon'])
 index = X_flat.index
 n = len(index)
 
-# %%
-%%time
+#%%
+# Check scale
+plt.figure()
+plt.plot(lat, cosw)
+plt.figure()
+plt.plot(lat, scale)
+
+# %%time
 # Perform ensemble EOF analysis (takes a few minutes), or load from Pickle if it has already been done
 
 if not COMPUTE_EOFS:
     # load PCA output from Pickle
-    pcvec,evl = pickle.load( open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EIG.p", "rb" ))
+    pcvec,evl = pickle.load( open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EOF.p", "rb" ))
 else: 
     # Large Ensemble EOFs
     Cov = np.matmul(X_flat.values.T,X_flat.values)/(n-1)
     evl,pcvec = np.linalg.eig(Cov)
-    pickle.dump([pcvec,evl], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EIG.p", "wb" ),protocol=4)
+    pickle.dump([pcvec,evl], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EOF.p", "wb" ),protocol=4)
 
 s=np.sqrt(evl)
 
 ## keeping the below as a reminder that SVD is much slower than eigenvalue analysis for datasets with long time dimension
+
+#%%
+# Check data matrix.
+X_flat_sampled = X_flat.sel(
+    time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+X_flat_reshaped = np.reshape(
+    np.mean(X_flat_sampled.data, axis=0), [n_lat, n_lon])
+plt.imshow(X_flat_reshaped)
+plt.colorbar(orientation='horizontal')
+pickle_path = f"{PICKLE_DIR_TS}/{MODEL}/{EXP_P}/datamat_rwills.p"
+with open(pickle_path, "wb+") as pickle_file:
+    pickle.dump(X_flat, pickle_file, protocol=4)
+
+#%%
+# Check EOFs
+eof_reshaped = np.reshape(pcvec[:, 0], [n_lat, n_lon])
+plt.imshow(eof_reshaped, vmin=0.0, vmax=0.04)
+plt.colorbar(orientation='horizontal')
 
 #%%time
 # Perform ensemble EOF analysis (SVD takes ~20-25 minutes), or load from Pickle if it has already been done
