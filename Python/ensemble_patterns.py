@@ -37,7 +37,7 @@ ts_pickle_path = f"{PICKLE_DIR_TS}/{MODEL}/{EXP_P}/{ts_pickle_name}"
 ts_anom_coarse, ts_clim_coarse = snp.compute_coarsen_pickle_ts(
     exp_c=EXP_C, exp_p=EXP_P, model=MODEL, table=VAR_TABLE, var_name=VAR_NAME,
     pickle_path=ts_pickle_path, precise_fnames=PRECISE_FNAMES,
-    realizations=REALIZATIONS, coarsen_factor=2, derived=False,
+    realizations=REALIZATIONS, coarsen_factor=4, derived=False,
     directory=DATA_DIR)
 ts_all = ts_anom_coarse
 ts_clim = ts_clim_coarse
@@ -71,6 +71,7 @@ cbar = plt.colorbar()
 
 lon = ts_all.lon
 lat = ts_all.lat
+time = ts_all.time
 cosw = np.sqrt(np.cos(lat*np.pi/180))
 normvec  = cosw/np.sum(cosw);
 scale = np.sqrt(normvec);
@@ -96,6 +97,18 @@ plt.plot(lat, cosw)
 plt.figure()
 plt.plot(lat, scale)
 
+#%%
+# Check data matrix.
+X_flat_sampled = X_flat.sel(
+    time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+X_flat_reshaped = np.reshape(
+    np.mean(X_flat_sampled.data, axis=0), [n_lat, n_lon])
+plt.imshow(X_flat_reshaped, vmin=0.0, vmax=0.10)
+plt.colorbar(orientation='horizontal')
+pickle_path = f"{PICKLE_DIR_TS}/{MODEL}/{EXP_P}/datamat_rwills.p"
+with open(pickle_path, "wb+") as pickle_file:
+    pickle.dump(X_flat, pickle_file, protocol=4)
+
 # %%time
 # Perform ensemble EOF analysis (takes a few minutes), or load from Pickle if it has already been done
 
@@ -113,21 +126,9 @@ s=np.sqrt(evl)
 ## keeping the below as a reminder that SVD is much slower than eigenvalue analysis for datasets with long time dimension
 
 #%%
-# Check data matrix.
-X_flat_sampled = X_flat.sel(
-    time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
-X_flat_reshaped = np.reshape(
-    np.mean(X_flat_sampled.data, axis=0), [n_lat, n_lon])
-plt.imshow(X_flat_reshaped)
-plt.colorbar(orientation='horizontal')
-pickle_path = f"{PICKLE_DIR_TS}/{MODEL}/{EXP_P}/datamat_rwills.p"
-with open(pickle_path, "wb+") as pickle_file:
-    pickle.dump(X_flat, pickle_file, protocol=4)
-
-#%%
 # Check EOFs
 eof_reshaped = np.reshape(pcvec[:, 0], [n_lat, n_lon])
-plt.imshow(eof_reshaped, vmin=0.0, vmax=0.04)
+plt.imshow(-eof_reshaped, vmin=0.0, vmax=0.08)
 plt.colorbar(orientation='horizontal')
 
 #%%time
@@ -185,10 +186,41 @@ for ii in range(neof):
         
 pickle.dump([tk,tk_emean,SNPs_reshaped,weights,signal_frac], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_SNP"+str(neof)+".p", "wb" ),protocol=4)
 
+#%%
+# Compute forced response.
+M = 2  # number of forced patterns to retain, choose cutoff based on eigenvalue spectrum, or check significant patterns with bootstrapping
+# Compute forced response as estimated by SNP filtering.
+forced_response = np.real(np.matmul(tk_emean[:, 0:M], SNP[0:M, :]))
+snps_reshaped = np.reshape(SNP, [n_lat, n_lon, neof])
+forced_response_reshaped = np.reshape(forced_response, [nt, n_lat, n_lon])
+forced_response_da = xr.DataArray(
+    forced_response_reshaped,
+    coords={'time': time, 'lat': lat, 'lon': lon},
+    name=VAR_NAME, )
+
+#%%
+# Debug.
+fr_plot_db = (
+    (forced_response_da / scale)
+    .sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31')).mean(dim='time')
+)
+
+f1, ax1 = plt.subplots()
+fr1 = ax1.imshow(np.abs(fr_plot_db))
+f1.colorbar(fr1, orientation='horizontal')
+# f2, ax2 = plt.subplots()
+# fr2 = ax2.imshow(
+#     np.abs(
+#         (fr_plot_db).data
+#         / em_plot.coarsen(lat=4, lon=4, boundary='trim').mean().data),
+#         vmin=0, vmax=0.5)
+# f2.colorbar(fr2)
+
 # %%
 print(signal_frac[0:30])
 plt.plot(signal_frac,marker='o')
 plt.xlim(0,30)
+plt.ylim(0,1)
 plt.title('Signal Fraction')
 
 #signal_frac_check = np.zeros(31)
