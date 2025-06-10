@@ -41,7 +41,7 @@ ts_anom_coarse, ts_clim_coarse = snp.compute_coarsen_pickle_ts(
     directory=DATA_DIR)
 ts_all = ts_anom_coarse
 ts_clim = ts_clim_coarse
-ne = ts_all.realization
+ne = len(ts_all.realization)
 nt = len(ts_all.time)
 n_lat = len(ts_all.lat)
 n_lon = len(ts_all.lon)
@@ -117,7 +117,7 @@ if not COMPUTE_EOFS:
     pcvec,evl = pickle.load( open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EOF.p", "rb" ))
 else: 
     # Large Ensemble EOFs
-    Cov = np.matmul(X_flat.values.T,X_flat.values)/(n-1)
+    Cov = np.matmul(X_flat.values.T,X_flat.values)/ne/(nt-1)
     evl,pcvec = np.linalg.eig(Cov)
     pickle.dump([pcvec,evl], open(EOF_DIR+MODEL+"_"+VAR_NAME+"_EOF.p", "wb" ),protocol=4)
 
@@ -126,9 +126,10 @@ s=np.sqrt(evl)
 ## keeping the below as a reminder that SVD is much slower than eigenvalue analysis for datasets with long time dimension
 
 #%%
-# Check EOFs
+# Check EOFs.
 eof_reshaped = np.reshape(pcvec[:, 0], [n_lat, n_lon])
-plt.imshow(-eof_reshaped, vmin=0.0, vmax=0.08)
+plt.imshow(-eof_reshaped, vmin=-0.08, vmax=0.0)
+# plt.imshow(eof_reshaped)
 plt.colorbar(orientation='horizontal')
 
 #%%time
@@ -188,10 +189,20 @@ pickle.dump([tk,tk_emean,SNPs_reshaped,weights,signal_frac], open(EOF_DIR+MODEL+
 
 #%%
 # Compute forced response.
-M = 2  # number of forced patterns to retain, choose cutoff based on eigenvalue spectrum, or check significant patterns with bootstrapping
+M = 1  # number of forced patterns to retain, choose cutoff based on eigenvalue spectrum, or check significant patterns with bootstrapping
 # Compute forced response as estimated by SNP filtering.
-forced_response = np.real(np.matmul(tk_emean[:, 0:M], SNP[0:M, :]))
-snps_reshaped = np.reshape(SNP, [n_lat, n_lon, neof])
+snps_reshaped = np.reshape(SNP, [neof, n_lat, n_lon])
+snps_reshaped_scaled = snps_reshaped / scale.values[None, :, None]
+snps_scaled = np.reshape(snps_reshaped_scaled, [neof, n_lat*n_lon])
+forced_response = np.matmul(tk_emean[:, 0:M], snps_scaled[0:M, :])
+X_forced = np.matmul(tk_emean[:,0:M],SNPs_reshaped[0:M,:,:].reshape(M,len(lat)*len(lon)))
+X_forced = X_forced.reshape(len(T),len(lat),len(lon))
+# X_forced_land = X_forced*landmask[None,:,:]
+X_forced = xr.DataArray(X_forced, coords=[T,lat,lon], dims=["time","lat","lon"])
+X_forced_plot = (
+    X_forced.sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+    .mean(dim='time')
+)
 forced_response_reshaped = np.reshape(forced_response, [nt, n_lat, n_lon])
 forced_response_da = xr.DataArray(
     forced_response_reshaped,
@@ -200,14 +211,34 @@ forced_response_da = xr.DataArray(
 
 #%%
 # Debug.
+YRII_AVG = 2015
+YRFI_AVG = 2024
+YRIF_AVG = 2040
+YRFF_AVG = 2049
 fr_plot_db = (
-    (forced_response_da / scale)
-    .sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31')).mean(dim='time')
+    forced_response_da
+    .sel(time=slice(f'{YRIF_AVG}-01-01', f'{YRFF_AVG}-12-31')).mean(dim='time')
+    # - forced_response_da
+    # .sel(time=slice(f'{YRII_AVG}-01-01', f'{YRFI_AVG}-12-31')).mean(dim='time')
+    # + ts_clim.mean(dim=['realization', 'month'])
+)
+em_plot_db = (
+    Xt_ensmean
+    .sel(time=slice(f'{YRIF_AVG}-01-01', f'{YRFF_AVG}-12-31')).mean(dim='time')
+    # - Xt_ensmean
+    # .sel(time=slice(f'{YRII_AVG}-01-01', f'{YRFI_AVG}-12-31')).mean(dim='time')
+    # + ts_clim.mean(dim=['realization', 'month'])
 )
 
 f1, ax1 = plt.subplots()
-fr1 = ax1.imshow(np.abs(fr_plot_db))
+fr1 = ax1.imshow(fr_plot_db, vmin=0.0, vmax=0.6)
 f1.colorbar(fr1, orientation='horizontal')
+ax1.set_title('forced response')
+
+f2, ax2 = plt.subplots()
+fr2 = ax2.imshow(em_plot_db, vmin=0.0, vmax=0.6)
+f2.colorbar(fr2, orientation='horizontal')
+ax2.set_title('ensemble mean')
 # f2, ax2 = plt.subplots()
 # fr2 = ax2.imshow(
 #     np.abs(
@@ -215,6 +246,8 @@ f1.colorbar(fr1, orientation='horizontal')
 #         / em_plot.coarsen(lat=4, lon=4, boundary='trim').mean().data),
 #         vmin=0, vmax=0.5)
 # f2.colorbar(fr2)
+
+# Simple ensemble mean.
 
 # %%
 print(signal_frac[0:30])
@@ -242,7 +275,7 @@ for neof_plot in range(2):
 
 # %%
 # Plot forced pattern timeseries
-tk_reshape=tk.reshape(nt,len(ne),neof)
+tk_reshape=tk.reshape(nt,ne,neof)
 
 for neof_plot in range(2): 
     f=plt.figure()
@@ -286,11 +319,15 @@ WEP_ensmean = Xt_ensmean.sel(lon=slice(120,180),lat=slice(-6,6)).mean('lon').mea
 #%%
 # Plot surface temperature response.
 X_forced_plot = (
-    X_forced.sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+    X_forced.sel(time=slice(f'{YRIF_AVG}-01-01', f'{YRFF_AVG}-12-31'))
+    .mean(dim='time')
+    - X_forced.sel(time=slice(f'{YRII_AVG}-01-01', f'{YRFI_AVG}-12-31'))
     .mean(dim='time')
 )
 X_ensmean_plot = (
-    ts_all.sel(time=slice(f'{YRI_AVG}-01-01', f'{YRF_AVG}-12-31'))
+    ts_all.sel(time=slice(f'{YRIF_AVG}-01-01', f'{YRFF_AVG}-12-31'))
+    .mean(dim=['time', 'realization'])
+    - ts_all.sel(time=slice(f'{YRII_AVG}-01-01', f'{YRFI_AVG}-12-31'))
     .mean(dim=['time', 'realization'])
 )
 f=plt.figure()
